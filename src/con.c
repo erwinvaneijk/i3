@@ -266,6 +266,41 @@ void con_activate(Con *con) {
 }
 
 /*
+ * Activates the container like in con_activate but removes fullscreen
+ * restrictions and properly warps the pointer if needed.
+ *
+ */
+void con_activate_unblock(Con *con) {
+    Con *ws = con_get_workspace(con);
+    Con *previous_focus = focused;
+    Con *fullscreen_on_ws = con_get_fullscreen_covering_ws(ws);
+
+    if (fullscreen_on_ws && fullscreen_on_ws != con && !con_has_parent(con, fullscreen_on_ws)) {
+        con_disable_fullscreen(fullscreen_on_ws);
+    }
+
+    con_activate(con);
+
+    /* If the container is not on the current workspace, workspace_show() will
+     * switch to a different workspace and (if enabled) trigger a mouse pointer
+     * warp to the currently focused container (!) on the target workspace.
+     *
+     * Therefore, before calling workspace_show(), we make sure that 'con' will
+     * be focused on the workspace. However, we cannot just con_focus(con)
+     * because then the pointer will not be warped at all (the code thinks we
+     * are already there).
+     *
+     * So we focus 'con' to make it the currently focused window of the target
+     * workspace, then revert focus. */
+    if (ws != con_get_workspace(previous_focus)) {
+        con_activate(previous_focus);
+        /* Now switch to the workspace, then focus */
+        workspace_show(ws);
+        con_activate(con);
+    }
+}
+
+/*
  * Closes the given container.
  *
  */
@@ -1160,7 +1195,7 @@ static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fi
     /* 1: save the container which is going to be focused after the current
      * container is moved away */
     Con *focus_next = NULL;
-    if (!ignore_focus && source_ws == current_ws) {
+    if (!ignore_focus && source_ws == current_ws && target_ws != source_ws) {
         focus_next = con_descend_focused(source_ws);
         if (focus_next == con || con_has_parent(focus_next, con)) {
             focus_next = con_next_focused(con);
@@ -1312,8 +1347,8 @@ bool con_move_to_mark(Con *con, const char *mark) {
         return true;
     }
 
-    if (target->type == CT_WORKSPACE) {
-        DLOG("target container is a workspace, simply moving the container there.\n");
+    if (target->type == CT_WORKSPACE && con_is_leaf(target)) {
+        DLOG("target container is an empty workspace, simply moving the container there.\n");
         con_move_to_workspace(con, target, true, false, false);
         return true;
     }
